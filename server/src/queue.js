@@ -14,7 +14,18 @@ function getQueue() {
 }
 
 export async function enqueueProcessing(jobId) {
-  await getQueue().add("process-document", { jobId }, { jobId, attempts: 3, backoff: { type: "exponential", delay: 2_000 } });
+  await addProcessingJob(getQueue(), jobId);
+}
+
+// The MySQL processing_jobs row is the durable record. Remove completed BullMQ
+// jobs so a deferred database job can be added again with its stable job ID.
+export async function addProcessingJob(queue, jobId) {
+  await queue.add("process-document", { jobId }, {
+    jobId,
+    attempts: 3,
+    backoff: { type: "exponential", delay: 2_000 },
+    removeOnComplete: true,
+  });
 }
 
 export async function closeQueue() { if (documentQueue) await documentQueue.close(); if (connection) await connection.quit(); }

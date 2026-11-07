@@ -20,13 +20,21 @@ export async function query(sql, params = []) {
 
 export async function transaction(callback) {
   const connection = await pool.getConnection();
+  return runTransaction(connection, callback);
+}
+
+export async function runTransaction(connection, callback) {
   try {
     await connection.beginTransaction();
     const result = await callback(connection);
     await connection.commit();
     return result;
   } catch (error) {
-    await connection.rollback();
+    try {
+      await connection.rollback();
+    } catch (rollbackError) {
+      throw new AggregateError([error, rollbackError], "The transaction failed and rollback could not be completed.", { cause: error });
+    }
     throw error;
   } finally { connection.release(); }
 }

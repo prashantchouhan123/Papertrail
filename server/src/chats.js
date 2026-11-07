@@ -78,38 +78,56 @@ export const askQuestion = asyncHandler(async (req, res) => {
     stage = "validate_chat";
     const chats = await query("SELECT id FROM chats WHERE id=? AND user_id=?", [req.params.sessionId, req.user.id]);
     if (!chats.length) throw new AppError(404, "CHAT_NOT_FOUND", "That conversation could not be found.");
-    stage = "save_user_message";
     await setChatDocuments(req.params.sessionId, req.user.id, docs);
     const userMessageId = crypto.randomUUID();
-    await query("INSERT INTO chat_messages (id,chat_id,user_id,role,content,created_at) VALUES (?,?,?,'user',?,UTC_TIMESTAMP(3))", [userMessageId, req.params.sessionId, req.user.id, question]);
-    stage = "generate_embedding";
-    const vector = await embedText(question);
-    stage = "qdrant_retrieval";
-    const points = await searchVectors(vector, req.user.id, docs.map((doc) => doc.id), 5);
-    const excerpts = points.map((point) => point.payload).filter((payload) => payload && docs.some((doc) => doc.id === payload.documentId) && payload.userId === req.user.id).map((payload) => ({ chunkId: payload.chunkId, documentId: payload.documentId, documentName: payload.documentName, pageStart: payload.pageStart, pageEnd: payload.pageEnd, text: payload.text }));
-    if (!excerpts.length) {
-      const result = { answer: "I couldn't find relevant passages in the selected documents. Try another question or select different sources.", insufficientEvidence: true, citations: [] };
-      return await saveAnswer(req, res, userMessageId, question, result, (nextStage) => { stage = nextStage; });
-    }
-    stage = "generate_answer";
-    const result = await generateGroundedAnswer(question, excerpts);
-    return await saveAnswer(req, res, userMessageId, question, result, (nextStage) => { stage = nextStage; });
+    return await generateThenPersist(async () => {
+      stage = "generate_embedding";
+      const vector = await embedText(question);
+      stage = "qdrant_retrieval";
+      const points = await searchVectors(vector, req.user.id, docs.map((doc) => doc.id), 5);
+      const excerpts = points.map((point) => point.payload).filter((payload) => payload && docs.some((doc) => doc.id === payload.documentId) && payload.userId === req.user.id).map((payload) => ({ chunkId: payload.chunkId, documentId: payload.documentId, documentName: payload.documentName, pageStart: payload.pageStart, pageEnd: payload.pageEnd, text: payload.text }));
+      if (!excerpts.length) return { answer: "I couldn't find relevant passages in the selected documents. Try another question or select different sources.", insufficientEvidence: true, citations: [] };
+      stage = "generate_answer";
+      return generateGroundedAnswer(question, excerpts);
+    }, (result) => saveAnswer(req, res, userMessageId, question, result, (nextStage) => { stage = nextStage; }));
   } catch (error) {
     if (error && typeof error === "object") error.diagnosticStage = stage;
     throw error;
   }
 });
 
+export async function generateThenPersist(generate, persist) {
+  const result = await generate();
+  await persist(result);
+  return result;
+}
+
 async function saveAnswer(req, res, userMessageId, question, result, setStage) {
   const answerId = crypto.randomUUID();
-  await transaction(async (connection) => {
-    setStage("save_assistant_message");
-    await connection.execute("INSERT INTO chat_messages (id,chat_id,user_id,role,content,model_name,created_at) VALUES (?,?,?,'assistant',?,?,UTC_TIMESTAMP(3))", [answerId, req.params.sessionId, req.user.id, result.answer, config.aiEnabled ? config.geminiModel : null]);
-    setStage("save_citations");
-    for (const citation of result.citations) await connection.execute("INSERT INTO message_citations (id,message_id,user_id,document_id,chunk_id,page_start,page_end,excerpt,created_at) VALUES (?,?,?,?,?,?,?, ?,UTC_TIMESTAMP(3))", [crypto.randomUUID(), answerId, req.user.id, citation.documentId, citation.chunkId, citation.pageStart, citation.pageEnd, citation.excerpt]);
-    setStage("save_assistant_message");
-    const title = question.slice(0, 78);
-    await connection.execute("UPDATE chats SET title=IF(title='Untitled research',?,title),updated_at=UTC_TIMESTAMP(3) WHERE id=? AND user_id=?", [title, req.params.sessionId, req.user.id]);
+  await persistChatTurn({
+    transactionFn: transaction,
+    chatId: req.params.sessionId,
+    userId: req.user.id,
+    question,
+    userMessageId,
+    answerId,
+    result,
+    modelName: config.aiEnabled ? config.geminiModel : null,
+    setStage,
   });
   res.json({ success: true, data: { messageId: answerId, answer: result.answer, citations: result.citations.map(({ chunkId, ...citation }) => citation), insufficientEvidence: result.insufficientEvidence } });
+}
+
+export async function persistChatTurn({ transactionFn = transaction, chatId, userId, question, userMessageId, answerId, result, modelName, setStage = () => {} }) {
+  await transactionFn(async (connection) => {
+    setStage("save_user_message");
+    await connection.execute("INSERT INTO chat_messages (id,chat_id,user_id,role,content,created_at) VALUES (?,?,?,'user',?,UTC_TIMESTAMP(3))", [userMessageId, chatId, userId, question]);
+    setStage("save_assistant_message");
+    await connection.execute("INSERT INTO chat_messages (id,chat_id,user_id,role,content,model_name,created_at) VALUES (?,?,?,'assistant',?,?,UTC_TIMESTAMP(3))", [answerId, chatId, userId, result.answer, modelName]);
+    setStage("save_citations");
+    for (const citation of result.citations) await connection.execute("INSERT INTO message_citations (id,message_id,user_id,document_id,chunk_id,page_start,page_end,excerpt,created_at) VALUES (?,?,?,?,?,?,?, ?,UTC_TIMESTAMP(3))", [crypto.randomUUID(), answerId, userId, citation.documentId, citation.chunkId, citation.pageStart, citation.pageEnd, citation.excerpt]);
+    setStage("save_assistant_message");
+    const title = question.slice(0, 78);
+    await connection.execute("UPDATE chats SET title=IF(title='Untitled research',?,title),updated_at=UTC_TIMESTAMP(3) WHERE id=? AND user_id=?", [title, chatId, userId]);
+  });
 }
