@@ -1,0 +1,22 @@
+import { useEffect, useState } from "react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, BookOpen, FileText, MessageSquareText, Plus, Lightbulb, UploadCloud } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { api } from "../api.js";
+
+function dateLabel() { return new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date()); }
+
+export function Dashboard() {
+  const [documents, setDocuments] = useState([]);
+  const [error, setError] = useState("");
+  const navigate = useNavigate();
+  useEffect(() => { api("/documents?limit=4").then((result) => setDocuments(result.items || [])).catch((err) => setError(err.message)); }, []);
+  return <div className="dashboard-page">
+    <div className="welcome-line"><span className="eyebrow">{dateLabel().toUpperCase()}</span><span className="availability"><i/> WORKSPACE READY</span></div>
+    <section className="welcome-panel"><div className="welcome-copy"><div className="welcome-kicker"><Lightbulb size={14}/> YOUR RESEARCH DESK</div><h1>Make room for<br/><em>better questions.</em></h1><p>Your documents hold the details. Start a conversation and find the thread worth following.</p><button className="button-primary" onClick={() => navigate("/research")}>Start a research chat <ArrowRight size={17}/></button></div><div className="welcome-art" aria-hidden="true"><div className="art-sun"/><div className="art-sheet sheet-back"/><div className="art-sheet sheet-front"><div className="art-lines"><i/><i/><i/><i/></div><span className="art-highlight"/></div><div className="art-sparkle sparkle-one">✳</div><div className="art-sparkle sparkle-two">✦</div><div className="art-caption"><span>YOUR LIBRARY</span><strong>Ideas, in context.</strong></div></div></section>
+    <div className="section-heading"><div><span className="eyebrow">A LITTLE MOMENTUM</span><h2>Your workspace</h2></div><Link to="/library" className="text-link">View library <ArrowRight size={15}/></Link></div>
+    <div className="stat-grid"><article className="stat-card"><div className="stat-icon stat-green"><FileText size={18}/></div><p>Documents</p><strong>{documents.length}</strong><span>{documents.length ? "Ready to explore" : "Your library is waiting"}</span><div className="stat-corner"><ArrowUpRight size={15}/></div></article><article className="stat-card"><div className="stat-icon stat-yellow"><MessageSquareText size={18}/></div><p>Research chats</p><strong>—</strong><span>Conversations, saved</span><div className="stat-corner"><ArrowUpRight size={15}/></div></article><article className="stat-card"><div className="stat-icon stat-blue"><BookOpen size={18}/></div><p>Sources cited</p><strong>—</strong><span>Evidence you can revisit</span><div className="stat-corner"><ArrowUpRight size={15}/></div></article></div>
+    <div className="lower-grid"><section className="library-preview"><div className="section-heading compact"><div><span className="eyebrow">RECENTLY ADDED</span><h2>Your documents</h2></div><Link to="/library" className="text-link">See all <ArrowRight size={15}/></Link></div>{error ? <div className="inline-error">{error}</div> : documents.length ? <div className="recent-list">{documents.slice(0, 4).map((doc) => <div className="recent-document" key={doc.id}><div className="pdf-icon">PDF</div><div className="recent-doc-copy"><strong>{doc.originalName}</strong><span>{doc.pageCount ? `${doc.pageCount} pages` : "Processing"} · {doc.status}</span></div><ArrowUpRight size={15}/></div>)}</div> : <div className="empty-library"><div className="empty-icon"><UploadCloud size={21}/></div><strong>Nothing in your library yet</strong><p>Upload a PDF to begin asking questions across your sources.</p><Link to="/library" className="text-link">Add your first document <ArrowRight size={15}/></Link></div>}</section>
+    <aside className="prompt-card"><div className="prompt-top"><span className="prompt-glyph">“</span><span className="eyebrow">A GOOD PLACE TO BEGIN</span></div><h3>Start with a question you’ve been carrying.</h3><p>Compare ideas across papers, unpack a tricky section, or simply find what matters.</p><button className="prompt-action" onClick={() => navigate("/research")}>Open research <ArrowDownRight size={16}/></button><div className="prompt-decoration">✳</div></aside></div>
+    <button className="floating-upload" onClick={() => navigate("/library")}><Plus size={17}/> Add a document</button>
+  </div>;
+}

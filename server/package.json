@@ -1,0 +1,33 @@
+{
+  "name": "server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "worker": "node src/worker.js",
+    "migrate": "node src/migrate.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "latest",
+    "bcryptjs": "latest",
+    "bullmq": "latest",
+    "cookie-parser": "latest",
+    "cors": "latest",
+    "dotenv": "latest",
+    "express": "latest",
+    "express-rate-limit": "latest",
+    "helmet": "latest",
+    "ioredis": "latest",
+    "jsonwebtoken": "latest",
+    "mysql2": "latest",
+    "multer": "latest",
+    "pdfjs-dist": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "supertest": "latest"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "ai-document-research-assistant",
+  "private": true,
+  "type": "module",
+  "workspaces": ["client", "server"],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run dev -w server",
+    "dev:web": "npm run dev -w client",
+    "build": "npm run build -w client",
+    "start": "npm run start -w server",
+    "worker": "npm run worker -w server",
+    "test": "npm run test -w server && npm run test -w client",
+    "db:migrate": "npm run migrate -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
