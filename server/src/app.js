@@ -13,6 +13,7 @@ import { askQuestion, createChat, deleteChat, getChat, listChats, renameChat } f
 
 export const app = express();
 app.disable("x-powered-by");
+app.set("trust proxy", config.trustProxyHops > 0 ? config.trustProxyHops : false);
 app.use(helmet({ crossOriginResourcePolicy: { policy: "same-site" }, contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", "data:"], connectSrc: ["'self'", config.clientUrl, "http://localhost:5000"] } } }));
 app.use(cors({ origin: config.clientUrl, credentials: true, methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"] }));
 app.use((req, res, next) => { req.id = crypto.randomUUID(); res.setHeader("X-Request-Id", req.id); next(); });
@@ -30,6 +31,8 @@ app.get("/health/dependencies", asyncHandler(async (_req, res) => {
 const router = express.Router();
 const authLimiter = rateLimit({ windowMs: 60_000, limit: config.authRate, standardHeaders: "draft-8", legacyHeaders: false, message: { success: false, error: { code: "RATE_LIMITED", message: "Too many sign-in attempts. Please wait and try again." } } });
 const chatLimiter = rateLimit({ windowMs: 60_000, limit: config.chatRate, standardHeaders: "draft-8", legacyHeaders: false, keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip), message: { success: false, error: { code: "RATE_LIMITED", message: "Too many research requests. Please wait and try again." } } });
+export const createUploadLimiter = (limit = config.uploadRate) => rateLimit({ windowMs: 60_000, limit, standardHeaders: "draft-8", legacyHeaders: false, keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip), message: { success: false, error: { code: "RATE_LIMITED", message: "Too many document uploads. Please wait and try again." } } });
+export const uploadLimiter = createUploadLimiter();
 
 router.get("/auth/csrf", requireOrigin, csrfRoute);
 router.post("/auth/register", authLimiter, requireOrigin, requireCsrf, register);
@@ -38,7 +41,7 @@ router.post("/auth/refresh", requireOrigin, requireCsrf, refresh);
 router.post("/auth/logout", requireOrigin, requireCsrf, logout);
 router.get("/auth/me", authenticate, me);
 
-router.post("/documents", authenticate, requireOrigin, requireCsrf, uploadPdf, createDocument);
+router.post("/documents", authenticate, requireOrigin, requireCsrf, uploadLimiter, uploadPdf, createDocument);
 router.get("/documents", authenticate, listDocuments);
 router.get("/documents/:documentId", authenticate, getDocument);
 router.delete("/documents/:documentId", authenticate, requireOrigin, requireCsrf, deleteDocument);

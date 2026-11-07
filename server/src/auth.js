@@ -54,22 +54,38 @@ export const refresh = asyncHandler(async (req, res) => {
   const existing = await query("SELECT rt.*,u.name,u.email FROM refresh_tokens rt JOIN users u ON u.id=rt.user_id WHERE rt.token_hash=? LIMIT 1", [hashToken(raw)]);
   if (!existing.length) { res.clearCookie("refreshToken", cookieOptions); throw new AppError(401, "SESSION_EXPIRED", "Your session has expired. Please sign in again."); }
   const record = existing[0];
-  if (record.revoked_at || new Date(record.expires_at) <= new Date()) {
-    if (record.revoked_at) await query("UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,UTC_TIMESTAMP(3)) WHERE family_id=?", [record.family_id]);
+  if (record.revoked_at) {
+    await query("UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,UTC_TIMESTAMP(3)) WHERE family_id=?", [record.family_id]);
     res.clearCookie("refreshToken", cookieOptions);
     throw new AppError(401, "SESSION_REUSE_DETECTED", "This session is no longer valid. Please sign in again.");
   }
-  const next = newToken(); const nextId = crypto.randomUUID();
+  if (new Date(record.expires_at) <= new Date()) {
+    res.clearCookie("refreshToken", cookieOptions);
+    throw new AppError(401, "SESSION_EXPIRED", "Your session has expired. Please sign in again.");
+  }
   const user = { id: record.user_id, name: record.name, email: record.email };
-  await transaction(async (connection) => {
-    const [locked] = await connection.execute("SELECT revoked_at FROM refresh_tokens WHERE id=? FOR UPDATE", [record.id]);
-    if (!locked.length || locked[0].revoked_at) throw new AppError(401, "SESSION_REUSE_DETECTED", "This session is no longer valid. Please sign in again.");
-    await connection.execute("INSERT INTO refresh_tokens (id,user_id,family_id,token_hash,expires_at,created_at) VALUES (?,?,?,?,DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ? DAY),UTC_TIMESTAMP(3))", [nextId, user.id, record.family_id, hashToken(next), config.refreshDays]);
-    await connection.execute("UPDATE refresh_tokens SET revoked_at=UTC_TIMESTAMP(3),last_used_at=UTC_TIMESTAMP(3),replaced_by_id=? WHERE id=?", [nextId, record.id]);
-  });
-  setRefreshCookie(res, next);
+  const rotation = await rotateRefreshToken(record, user);
+  if (rotation.reuseDetected) {
+    res.clearCookie("refreshToken", cookieOptions);
+    throw new AppError(401, "SESSION_REUSE_DETECTED", "This session is no longer valid. Please sign in again.");
+  }
+  setRefreshCookie(res, rotation.token);
   res.json({ success: true, data: { accessToken: signAccess(user) } });
 });
+
+export async function rotateRefreshToken(record, user, transactionFn = transaction) {
+  const next = newToken(); const nextId = crypto.randomUUID();
+  return transactionFn(async (connection) => {
+    const [locked] = await connection.execute("SELECT revoked_at FROM refresh_tokens WHERE id=? FOR UPDATE", [record.id]);
+    if (!locked.length || locked[0].revoked_at) {
+      await connection.execute("UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,UTC_TIMESTAMP(3)) WHERE family_id=?", [record.family_id]);
+      return { reuseDetected: true };
+    }
+    await connection.execute("INSERT INTO refresh_tokens (id,user_id,family_id,token_hash,expires_at,created_at) VALUES (?,?,?,?,DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ? DAY),UTC_TIMESTAMP(3))", [nextId, user.id, record.family_id, hashToken(next), config.refreshDays]);
+    await connection.execute("UPDATE refresh_tokens SET revoked_at=UTC_TIMESTAMP(3),last_used_at=UTC_TIMESTAMP(3),replaced_by_id=? WHERE id=?", [nextId, record.id]);
+    return { reuseDetected: false, token: next };
+  });
+}
 
 export const logout = asyncHandler(async (req, res) => {
   const raw = req.cookies?.refreshToken;

@@ -8,6 +8,16 @@ const number = (name, fallback) => Number(process.env[name] || fallback);
 const refreshTtl = process.env.JWT_REFRESH_EXPIRES_IN || "7d";
 const refreshMatch = refreshTtl.match(/^(\d+)d$/);
 
+export function mysqlTlsOptions(enabled, ca) {
+  if (!enabled) return undefined;
+  return {
+    rejectUnauthorized: true,
+    ...(ca ? { ca: ca.replace(/\\n/g, "\n") } : {}),
+  };
+}
+
+const mysqlTls = mysqlTlsOptions(process.env.MYSQL_SSL === "true", process.env.MYSQL_SSL_CA || "");
+
 export const config = {
   root,
   env: process.env.NODE_ENV || "development",
@@ -20,6 +30,7 @@ export const config = {
     user: process.env.MYSQL_USER || "research_app",
     password: process.env.MYSQL_PASSWORD || "",
     database: process.env.MYSQL_DATABASE || "ai_document_research_assistant",
+    ...(mysqlTls ? { ssl: mysqlTls } : {}),
   },
   accessSecret: process.env.JWT_ACCESS_SECRET || "",
   refreshSecret: process.env.JWT_REFRESH_SECRET || "",
@@ -45,4 +56,6 @@ export const config = {
   maxJobsPerUser: number("MAX_CONCURRENT_JOBS_PER_USER", 2),
   authRate: number("MAX_AUTH_REQUESTS_PER_MINUTE", 10),
   chatRate: number("MAX_CHAT_REQUESTS_PER_MINUTE", 10),
+  uploadRate: number("MAX_UPLOAD_REQUESTS_PER_MINUTE", 10),
+  trustProxyHops: number("TRUST_PROXY_HOPS", 0),
 };
