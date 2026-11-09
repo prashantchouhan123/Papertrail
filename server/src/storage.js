@@ -23,7 +23,7 @@ export async function storePdf(buffer) {
   const key = `${crypto.randomUUID()}.pdf`;
   if (config.storageDriver === "s3") {
     if (!s3 || !bucket) throw new AppError(503, "STORAGE_NOT_CONFIGURED", "Private object storage is not configured.");
-    await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: buffer, ContentType: "application/pdf", ServerSideEncryption: "AES256" }));
+    await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: buffer, ContentType: "application/pdf" }));
   } else {
     await fs.mkdir(config.uploadDir, { recursive: true, mode: 0o700 });
     await fs.writeFile(localPath(key), buffer, { flag: "wx", mode: 0o600 });
