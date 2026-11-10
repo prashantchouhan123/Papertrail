@@ -4,6 +4,7 @@ import path from "node:path";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { config } from "./config.js";
 import { AppError } from "./errors.js";
+import { withExternalContext } from "./external-errors.js";
 
 const s3 = config.storageDriver === "s3" ? new S3Client({
   endpoint: process.env.S3_ENDPOINT || undefined,
@@ -23,7 +24,8 @@ export async function storePdf(buffer) {
   const key = `${crypto.randomUUID()}.pdf`;
   if (config.storageDriver === "s3") {
     if (!s3 || !bucket) throw new AppError(503, "STORAGE_NOT_CONFIGURED", "Private object storage is not configured.");
-    await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: buffer, ContentType: "application/pdf" }));
+    try { await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: buffer, ContentType: "application/pdf" })); }
+    catch (error) { throw withExternalContext(error, "supabase_s3", "put_object"); }
   } else {
     await fs.mkdir(config.uploadDir, { recursive: true, mode: 0o700 });
     await fs.writeFile(localPath(key), buffer, { flag: "wx", mode: 0o600 });
@@ -34,8 +36,10 @@ export async function storePdf(buffer) {
 export async function readPdf(key) {
   if (config.storageDriver === "s3") {
     if (!s3 || !bucket) throw new AppError(503, "STORAGE_NOT_CONFIGURED", "Private object storage is not configured.");
-    const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-    return Buffer.from(await response.Body.transformToByteArray());
+    let response;
+    try { response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key })); }
+    catch (error) { throw withExternalContext(error, "supabase_s3", "get_object"); }
+    return await response.Body.transformToByteArray();
   }
   return fs.readFile(localPath(key));
 }
@@ -43,7 +47,8 @@ export async function readPdf(key) {
 export async function deletePdf(key) {
   if (config.storageDriver === "s3") {
     if (!s3 || !bucket) throw new AppError(503, "STORAGE_NOT_CONFIGURED", "Private object storage is not configured.");
-    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    try { await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })); }
+    catch (error) { throw withExternalContext(error, "supabase_s3", "delete_object"); }
     return;
   }
   await fs.rm(localPath(key), { force: true });

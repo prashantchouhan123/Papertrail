@@ -20,7 +20,7 @@ describe("authentication screens", () => {
   it("renders the registration form with a minimum password length", () => {
     render(<MemoryRouter><AuthPage mode="register"/></MemoryRouter>);
     expect(screen.getByRole("heading", { name: "Create your workspace" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Your name")).toBeRequired();
+    expect(screen.getByLabelText("Full name")).toBeRequired();
     expect(screen.getAllByLabelText("Password").at(-1)).toHaveAttribute("minLength", "10");
   });
 

@@ -7,3 +7,5 @@ private-uploads/
 coverage/
 *.log
 .DS_Store
+
+certs/

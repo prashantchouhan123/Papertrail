@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { config } from "./config.js";
 import { AppError } from "./errors.js";
+import { externalErrorDetails, safeExternalMessage, withExternalContext } from "./external-errors.js";
 
 function safeProviderError(value) {
   if (typeof value !== "string") return undefined;
@@ -9,7 +10,7 @@ function safeProviderError(value) {
 
 function logProviderFailure({ operation, startedAt, status, error, timeout = false }) {
   const code = safeProviderError(error?.code);
-  const message = safeProviderError(error?.message);
+  const message = safeExternalMessage(error?.message);
   console.error(JSON.stringify({
     level: "error",
     provider: "gemini",
@@ -19,6 +20,7 @@ function logProviderFailure({ operation, startedAt, status, error, timeout = fal
     ...(timeout ? { timeout: true } : {}),
     ...(code ? { providerErrorCode: code } : {}),
     ...(message ? { providerErrorMessage: message } : {}),
+    ...(error ? { diagnostics: externalErrorDetails(error).causes } : {}),
   }));
 }
 
@@ -35,8 +37,9 @@ async function providerRequest(operation, model, method, body) {
   try {
     response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": config.geminiKey }, body: JSON.stringify(body), signal: AbortSignal.timeout(45_000) });
   } catch (error) {
-    logProviderFailure({ operation, startedAt, error: { code: error?.code, message: error?.name }, timeout: error?.name === "TimeoutError" || error?.name === "AbortError" });
-    throw error;
+    const externalError = withExternalContext(error, "gemini", operation);
+    logProviderFailure({ operation, startedAt, error: externalError, timeout: error?.name === "TimeoutError" || error?.name === "AbortError" });
+    throw externalError;
   }
   if (!response.ok) {
     let providerError;

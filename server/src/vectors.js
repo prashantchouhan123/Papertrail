@@ -1,5 +1,6 @@
 import { config } from "./config.js";
 import { AppError } from "./errors.js";
+import { withExternalContext } from "./external-errors.js";
 
 function sanitizedQdrantError(body) {
   if (!body || typeof body !== "object") return { response: "Non-JSON error response" };
@@ -12,7 +13,10 @@ function sanitizedQdrantError(body) {
 }
 
 async function qdrant(path, options = {}) {
-  const response = await fetch(`${config.qdrantUrl.replace(/\/$/, "")}${path}`, { ...options, headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(config.qdrantKey ? { "api-key": config.qdrantKey } : {}), ...options.headers } });
+  let response;
+  try {
+    response = await fetch(`${config.qdrantUrl.replace(/\/$/, "")}${path}`, { ...options, headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(config.qdrantKey ? { "api-key": config.qdrantKey } : {}), ...options.headers } });
+  } catch (error) { throw withExternalContext(error, "qdrant", path); }
   if (!response.ok) {
     const responseBody = await response.text();
     let parsed;
@@ -25,7 +29,9 @@ async function qdrant(path, options = {}) {
 
 export async function ensureCollection(dimension) {
   const collection = encodeURIComponent(config.qdrantCollection);
-  const existing = await fetch(`${config.qdrantUrl.replace(/\/$/, "")}/collections/${collection}`, { headers: config.qdrantKey ? { "api-key": config.qdrantKey } : {} });
+  let existing;
+  try { existing = await fetch(`${config.qdrantUrl.replace(/\/$/, "")}/collections/${collection}`, { headers: config.qdrantKey ? { "api-key": config.qdrantKey } : {} }); }
+  catch (error) { throw withExternalContext(error, "qdrant", "collection_lookup"); }
   if (existing.ok) {
     const info = await existing.json();
     const size = info.result?.config?.params?.vectors?.size;

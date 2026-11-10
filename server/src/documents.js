@@ -5,7 +5,7 @@ import { config } from "./config.js";
 import { pool, query, transaction } from "./db.js";
 import { AppError, asyncHandler } from "./errors.js";
 import { enqueueProcessing } from "./queue.js";
-import { extractPdf } from "./pdf.js";
+import { validatePdf } from "./pdf.js";
 import { deletePdf, storePdf } from "./storage.js";
 
 export const uploadPdf = multer({ storage: multer.memoryStorage(), limits: { fileSize: config.maxFileBytes, files: 1 }, fileFilter: (_req, file, done) => {
@@ -24,7 +24,7 @@ function nextCursor(row) { return Buffer.from(`${new Date(row.created_at).toISOS
 
 export const createDocument = asyncHandler(async (req, res) => {
   if (!req.file) throw new AppError(400, "FILE_REQUIRED", "Choose a PDF file to upload.");
-  const parsed = await extractPdf(req.file.buffer, config.maxPages);
+  const parsed = await validatePdf(req.file.buffer, config.maxPages);
   const storageKey = await storePdf(req.file.buffer);
   const id = crypto.randomUUID(); const jobId = crypto.randomUUID();
   try {

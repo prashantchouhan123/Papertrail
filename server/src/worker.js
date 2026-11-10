@@ -8,6 +8,7 @@ import { chunkPages, extractPdf } from "./pdf.js";
 import { deletePdf, readPdf } from "./storage.js";
 import { deleteDocumentVectors, ensureCollection, upsertVectors } from "./vectors.js";
 import { enqueueProcessing } from "./queue.js";
+import { externalErrorDetails } from "./external-errors.js";
 
 function stableUuid(value) {
   const bytes = crypto.createHash("sha256").update(value).digest().subarray(0, 16);
@@ -69,17 +70,23 @@ async function processDocument(job) {
   const parsed = await extractPdf(bytes, config.maxPages);
   const chunks = chunkPages(parsed.pages);
   if (!chunks.length) throw Object.assign(new Error("No usable text was found in this PDF."), { code: "NO_EXTRACTABLE_TEXT" });
-  const prepared = chunks.map((chunk, index) => ({ ...chunk, index, id: stableUuid(`${job.document_id}:${index}:${contentHash(chunk.text)}`), contentHash: contentHash(chunk.text), userId: job.user_id, documentId: job.document_id }));
-  await transaction(async (connection) => {
-    for (const chunk of prepared) await connection.execute("INSERT INTO document_chunks (id,document_id,user_id,chunk_index,page_start,page_end,text,content_hash,created_at) VALUES (?,?,?,?,?,?,?,?,UTC_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE text=VALUES(text),content_hash=VALUES(content_hash),page_start=VALUES(page_start),page_end=VALUES(page_end)", [chunk.id, chunk.documentId, chunk.userId, chunk.index, chunk.pageStart, chunk.pageEnd, chunk.text, chunk.contentHash]);
-    await connection.execute("UPDATE documents SET page_count=?,updated_at=UTC_TIMESTAMP(3) WHERE id=?", [parsed.pageCount, job.document_id]);
-  });
   await ensureCollection(config.embeddingDimension);
-  const embedded = [];
-  for (const chunk of prepared) embedded.push({ ...chunk, documentName: job.original_name, vector: await embedText(chunk.text) });
-  const [current] = await query("SELECT status FROM documents WHERE id=? AND user_id=?", [job.document_id, job.user_id]);
-  if (!current || current.status !== "processing") return;
-  await upsertVectors(embedded);
+  const batchSize = 10;
+  for (let offset = 0; offset < chunks.length; offset += batchSize) {
+    const prepared = chunks.slice(offset, offset + batchSize).map((chunk, index) => {
+      const chunkIndex = offset + index;
+      return { ...chunk, index: chunkIndex, id: stableUuid(`${job.document_id}:${chunkIndex}:${contentHash(chunk.text)}`), contentHash: contentHash(chunk.text), userId: job.user_id, documentId: job.document_id };
+    });
+    await transaction(async (connection) => {
+      for (const chunk of prepared) await connection.execute("INSERT INTO document_chunks (id,document_id,user_id,chunk_index,page_start,page_end,text,content_hash,created_at) VALUES (?,?,?,?,?,?,?,?,UTC_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE text=VALUES(text),content_hash=VALUES(content_hash),page_start=VALUES(page_start),page_end=VALUES(page_end)", [chunk.id, chunk.documentId, chunk.userId, chunk.index, chunk.pageStart, chunk.pageEnd, chunk.text, chunk.contentHash]);
+      if (offset === 0) await connection.execute("UPDATE documents SET page_count=?,updated_at=UTC_TIMESTAMP(3) WHERE id=?", [parsed.pageCount, job.document_id]);
+    });
+    const embedded = [];
+    for (const chunk of prepared) embedded.push({ ...chunk, documentName: job.original_name, vector: await embedText(chunk.text) });
+    const [current] = await query("SELECT status FROM documents WHERE id=? AND user_id=?", [job.document_id, job.user_id]);
+    if (!current || current.status !== "processing") return;
+    await upsertVectors(embedded);
+  }
   await finish(job.id, job.document_id, job.user_id);
 }
 
@@ -91,7 +98,7 @@ async function handle(jobId) {
     else await processDocument(job);
   } catch (error) {
     const code = ["NO_EXTRACTABLE_TEXT", "PDF_PARSE_FAILED", "PAGE_LIMIT_EXCEEDED"].includes(error.code) ? error.code : error.code === "AI_NOT_CONFIGURED" ? "AI_SETUP_REQUIRED" : "PROCESSING_FAILED";
-    console.error(JSON.stringify({ level: "error", jobId, documentId: job.document_id, code, message: error.message }));
+    console.error(JSON.stringify({ level: "error", jobId, documentId: job.document_id, code, ...externalErrorDetails(error) }));
     if (job.job_type === "delete") {
       await query("UPDATE processing_jobs SET status='failed',last_error_code=?,locked_at=NULL,updated_at=UTC_TIMESTAMP(3) WHERE id=?", [code, job.id]);
       await query("UPDATE documents SET status='failed',error_code=?,updated_at=UTC_TIMESTAMP(3) WHERE id=? AND user_id=? AND status='deleting'", [code, job.document_id, job.user_id]);
@@ -107,7 +114,7 @@ async function handle(jobId) {
 }
 
 const connection = new IORedis(config.redisUrl, { maxRetriesPerRequest: null });
-const worker = new Worker("document-processing", (job) => handle(job.data.jobId), { connection, prefix: config.bullPrefix, concurrency: 8, limiter: { max: 20, duration: 60_000 } });
+const worker = new Worker("document-processing", (job) => handle(job.data.jobId), { connection, prefix: config.bullPrefix, concurrency: 1, limiter: { max: 20, duration: 60_000 } });
 
 async function reconcile() {
   await query("UPDATE processing_jobs SET status='queued',locked_at=NULL,updated_at=UTC_TIMESTAMP(3) WHERE status='active' AND locked_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE)");
@@ -119,8 +126,8 @@ await reconcile().catch((error) => console.warn(`Queue recovery will retry when 
 const timer = setInterval(() => reconcile().catch((error) => console.warn(`Queue reconciliation failed: ${error.message}`)), 15_000);
 timer.unref();
 worker.on("ready", () => console.log("Document worker is ready."));
-worker.on("failed", (job, error) => console.error(JSON.stringify({ level: "error", code: "QUEUE_JOB_FAILED", jobId: job?.id, message: error.message })));
-worker.on("error", (error) => console.error(`Worker error: ${error.message}`));
+worker.on("failed", (job, error) => console.error(JSON.stringify({ level: "error", code: "QUEUE_JOB_FAILED", jobId: job?.id, ...externalErrorDetails(error) })));
+worker.on("error", (error) => console.error(JSON.stringify({ level: "error", code: "WORKER_ERROR", ...externalErrorDetails(error) })));
 console.log("Document worker starting; Gemini is disabled unless ENABLE_GEMINI=true.");
 
 async function shutdown() { clearInterval(timer); await worker.close(); await connection.quit(); await pool.end(); process.exit(0); }

@@ -9,6 +9,7 @@
     "dev:web": "npm run dev -w client",
     "build": "npm run build -w client",
     "start": "npm run start -w server",
+    "start:production": "node server/src/supervisor.js",
     "worker": "npm run worker -w server",
     "test": "npm run test -w server && npm run test -w client",
     "db:migrate": "npm run migrate -w server"
