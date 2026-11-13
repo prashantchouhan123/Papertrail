@@ -7,6 +7,7 @@ async function cleanupPdf(pdf, loadingTask) {
 }
 
 async function openPdf(buffer, maxPages) {
+  buffer = Buffer.from(buffer);
   if (buffer.length < 8 || buffer.subarray(0, 5).toString("ascii") !== "%PDF-") throw new AppError(415, "INVALID_PDF", "This file is not a valid PDF.");
   let loadingTask;
   let pdf;

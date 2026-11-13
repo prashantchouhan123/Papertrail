@@ -22,6 +22,13 @@ function parseCursor(cursor) {
 }
 function nextCursor(row) { return Buffer.from(`${new Date(row.created_at).toISOString()}|${row.id}`).toString("base64url"); }
 
+export function buildDocumentListQuery(userId, cursor, limit) {
+  const pageSize = limit + 1;
+  return cursor
+    ? { sql: "SELECT id,original_name,mime_type,size_bytes,page_count,status,error_code,created_at,updated_at FROM documents WHERE user_id=? AND status<>'deleted' AND (created_at < ? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT " + pageSize, params: [userId, cursor.date, cursor.date, cursor.id] }
+    : { sql: "SELECT id,original_name,mime_type,size_bytes,page_count,status,error_code,created_at,updated_at FROM documents WHERE user_id=? AND status<>'deleted' ORDER BY created_at DESC,id DESC LIMIT " + pageSize, params: [userId] };
+}
+
 export const createDocument = asyncHandler(async (req, res) => {
   if (!req.file) throw new AppError(400, "FILE_REQUIRED", "Choose a PDF file to upload.");
   const parsed = await validatePdf(req.file.buffer, config.maxPages);
@@ -46,9 +53,8 @@ export const createDocument = asyncHandler(async (req, res) => {
 export const listDocuments = asyncHandler(async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
   const cursor = parseCursor(String(req.query.cursor || ""));
-  const rows = cursor
-    ? await query("SELECT id,original_name,mime_type,size_bytes,page_count,status,error_code,created_at,updated_at FROM documents WHERE user_id=? AND status<>'deleted' AND (created_at < ? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT ?", [req.user.id, cursor.date, cursor.date, cursor.id, limit + 1])
-    : await query("SELECT id,original_name,mime_type,size_bytes,page_count,status,error_code,created_at,updated_at FROM documents WHERE user_id=? AND status<>'deleted' ORDER BY created_at DESC,id DESC LIMIT ?", [req.user.id, limit + 1]);
+  const { sql, params } = buildDocumentListQuery(req.user.id, cursor, limit);
+  const rows = await query(sql, params);
   const more = rows.length > limit; const page = rows.slice(0, limit);
   res.json({ success: true, data: { items: page.map(mapDoc), nextCursor: more ? nextCursor(page.at(-1)) : null } });
 });

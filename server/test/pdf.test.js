@@ -42,6 +42,13 @@ describe("PDF validation and extraction", () => {
     assert.deepEqual(await extractPdf(pdf, 10), { pageCount: 1, pages: [{ page: 1, text: "" }] });
   });
 
+  it("accepts S3 response Uint8Array bytes without misreading the PDF header", async () => {
+    const uploadedPdf = onePagePdf();
+    const s3ResponseBytes = new Uint8Array(uploadedPdf);
+    assert.deepEqual(await validatePdf(s3ResponseBytes, 10), { pageCount: 1 });
+    assert.deepEqual(await extractPdf(s3ResponseBytes, 10), { pageCount: 1, pages: [{ page: 1, text: "" }] });
+  });
+
   it("rejects empty and non-PDF files with the existing invalid-PDF error", async () => {
     for (const input of [Buffer.alloc(0), Buffer.from("not a PDF")]) {
       await assert.rejects(validatePdf(input, 10), { code: "INVALID_PDF", status: 415 });

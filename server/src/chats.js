@@ -11,6 +11,13 @@ const questionInput = z.object({ question: z.string().trim().min(2).max(6000), d
 function cursorDecode(cursor) { try { const [date, id] = Buffer.from(cursor, "base64url").toString().split("|"); return date && id ? { date, id } : null; } catch { return null; } }
 function cursorEncode(row) { return Buffer.from(`${new Date(row.updated_at).toISOString()}|${row.id}`).toString("base64url"); }
 
+export function buildChatListQuery(userId, cursor, limit) {
+  const pageSize = limit + 1;
+  return cursor
+    ? { sql: "SELECT id,title,created_at,updated_at FROM chats WHERE user_id=? AND (updated_at<? OR (updated_at=? AND id<?)) ORDER BY updated_at DESC,id DESC LIMIT " + pageSize, params: [userId, cursor.date, cursor.date, cursor.id] }
+    : { sql: "SELECT id,title,created_at,updated_at FROM chats WHERE user_id=? ORDER BY updated_at DESC,id DESC LIMIT " + pageSize, params: [userId] };
+}
+
 async function validateDocuments(userId, ids) {
   const unique = [...new Set(ids)];
   if (!unique.length) return [];
@@ -38,9 +45,8 @@ export const createChat = asyncHandler(async (req, res) => {
 
 export const listChats = asyncHandler(async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100); const cursor = cursorDecode(String(req.query.cursor || ""));
-  const rows = cursor
-    ? await query("SELECT id,title,created_at,updated_at FROM chats WHERE user_id=? AND (updated_at<? OR (updated_at=? AND id<?)) ORDER BY updated_at DESC,id DESC LIMIT ?", [req.user.id, cursor.date, cursor.date, cursor.id, limit + 1])
-    : await query("SELECT id,title,created_at,updated_at FROM chats WHERE user_id=? ORDER BY updated_at DESC,id DESC LIMIT ?", [req.user.id, limit + 1]);
+  const { sql, params } = buildChatListQuery(req.user.id, cursor, limit);
+  const rows = await query(sql, params);
   const more = rows.length > limit; const page = rows.slice(0, limit);
   res.json({ success: true, data: { items: page.map((chat) => ({ id: chat.id, title: chat.title, createdAt: chat.created_at, updatedAt: chat.updated_at })), nextCursor: more ? cursorEncode(page.at(-1)) : null } });
 });
