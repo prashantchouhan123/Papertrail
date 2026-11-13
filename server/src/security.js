@@ -5,8 +5,8 @@ import { AppError } from "./errors.js";
 
 export const cookieOptions = {
   httpOnly: true,
-  secure: config.cookieSecure,
-  sameSite: "lax",
+  secure: config.env === "production" ? true : config.cookieSecure,
+  sameSite: config.env === "production" ? "none" : "lax",
   path: "/",
 };
 

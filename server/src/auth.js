@@ -13,7 +13,7 @@ const setRefreshCookie = (res, token) => res.cookie("refreshToken", token, { ...
 
 export const csrfRoute = (_req, res) => {
   const token = crypto.randomBytes(24).toString("base64url");
-  res.cookie("csrfToken", token, { httpOnly: false, secure: config.cookieSecure, sameSite: "lax", path: "/", maxAge: 86400_000 });
+  res.cookie("csrfToken", token, { ...cookieOptions, httpOnly: false, maxAge: 86400_000 });
   res.json({ success: true, data: { csrfToken: token } });
 };
 
