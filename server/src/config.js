@@ -11,6 +11,7 @@ const refreshMatch = refreshTtl.match(/^(\d+)d$/);
 export function mysqlTlsOptions(enabled, ca) {
   if (!enabled) return undefined;
   return {
+    minVersion: "TLSv1.2",
     rejectUnauthorized: true,
     ...(ca ? { ca: ca.replace(/\\n/g, "\n") } : {}),
   };

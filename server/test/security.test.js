@@ -71,6 +71,7 @@ describe("security hardening regressions", () => {
   it("supports verified MySQL TLS while leaving local development unchanged by default", () => {
     assert.equal(mysqlTlsOptions(false, "ignored"), undefined);
     assert.deepEqual(mysqlTlsOptions(true, "-----BEGIN CERTIFICATE-----\\ncertificate\\n-----END CERTIFICATE-----"), {
+      minVersion: "TLSv1.2",
       rejectUnauthorized: true,
       ca: "-----BEGIN CERTIFICATE-----\ncertificate\n-----END CERTIFICATE-----",
     });

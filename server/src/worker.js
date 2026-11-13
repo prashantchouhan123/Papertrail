@@ -115,6 +115,7 @@ async function handle(jobId) {
 
 const connection = new IORedis(config.redisUrl, { maxRetriesPerRequest: null });
 const worker = new Worker("document-processing", (job) => handle(job.data.jobId), { connection, prefix: config.bullPrefix, concurrency: 1, limiter: { max: 20, duration: 60_000 } });
+worker.on("ready", () => console.log("Document worker is ready."));
 
 async function reconcile() {
   await query("UPDATE processing_jobs SET status='queued',locked_at=NULL,updated_at=UTC_TIMESTAMP(3) WHERE status='active' AND locked_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 10 MINUTE)");
@@ -125,7 +126,6 @@ async function reconcile() {
 await reconcile().catch((error) => console.warn(`Queue recovery will retry when dependencies are ready: ${error.message}`));
 const timer = setInterval(() => reconcile().catch((error) => console.warn(`Queue reconciliation failed: ${error.message}`)), 15_000);
 timer.unref();
-worker.on("ready", () => console.log("Document worker is ready."));
 worker.on("failed", (job, error) => console.error(JSON.stringify({ level: "error", code: "QUEUE_JOB_FAILED", jobId: job?.id, ...externalErrorDetails(error) })));
 worker.on("error", (error) => console.error(JSON.stringify({ level: "error", code: "WORKER_ERROR", ...externalErrorDetails(error) })));
 console.log("Document worker starting; Gemini is disabled unless ENABLE_GEMINI=true.");
