@@ -8,3 +8,15 @@ html[data-density="compact"] .document-row{padding-top:8px;padding-bottom:8px;mi
 .research-brand-icon{position:relative;z-index:1;width:43px;height:43px;object-fit:contain}
 
 .brand-logo{display:block;height:auto;object-fit:contain;flex:none}.sidebar-brand-logo{width:72px;max-width:100%}.auth-brand-logo{width:min(160px,100%)}.mobile-brand-logo{width:min(140px,100%)}.boot-brand-logo{width:84px;margin-bottom:12px}@media(max-width:720px){.sidebar-brand-logo{width:64px}.mobile-brand-logo{width:min(140px,100%)}}
+
+.research-shell{height:100vh;height:100dvh;min-height:0;overflow:hidden}
+.research-shell .main-area{height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.research-shell .topbar{flex:none}
+.research-shell .page-content{width:100%;max-width:none;flex:1;min-width:0;min-height:0;overflow:hidden;margin:0;padding:0}
+.research-shell .research-page{height:100%;min-height:0;max-height:none;min-width:0;overflow:hidden;margin:0}
+.research-shell .research-sidebar{min-width:0;min-height:0}
+.research-shell .conversation{min-width:0;min-height:0;overflow:hidden}
+.research-shell .conversation-head,.research-shell .composer-wrap{flex:none}
+.research-shell .message-list{flex:1 1 auto;min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+.research-shell .conversation-welcome{min-width:0;min-height:0}
+@media(max-width:720px){.research-shell{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.research-shell .main-area{height:auto}.research-shell .page-content{min-height:0}}

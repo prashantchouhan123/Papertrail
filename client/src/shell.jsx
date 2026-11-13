@@ -14,7 +14,7 @@ export function Shell() {
     localStorage.setItem("papertrail-density", density);
   }, [density]);
   const title = location.pathname === "/library" ? "Your library" : location.pathname === "/research" ? "Research" : "Overview";
-  return <div className="app-frame">
+  return <div className={`app-frame ${location.pathname === "/research" ? "research-shell" : ""}`}>
     <aside className="sidebar">
       <a className="wordmark" href="/"><img className="brand-logo sidebar-brand-logo" src="/papertrail-ai-logo.svg" alt="Papertrail"/></a>
       <div className="workspace-switch"><div className="workspace-avatar">{user?.name?.[0]?.toUpperCase() || "Y"}</div><div><strong>{user?.name || "Your workspace"}</strong><small>Personal workspace</small></div><ChevronDown size={15}/></div>
