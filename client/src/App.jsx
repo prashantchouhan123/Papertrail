@@ -8,7 +8,7 @@ import { Shell } from "./shell.jsx";
 
 function Gate({ children }) {
   const { user, ready } = useAuth();
-  if (!ready) return <div className="boot-screen"><img className="brand-logo boot-brand-logo" src="/papertrail-ai-logo.svg" alt="Papertrail"/><p>Opening your workspace…</p></div>;
+  if (!ready) return <div className="boot-screen"><img className="brand-logo boot-brand-logo" src="/papertrail-logo.png" alt="Papertrail"/><p>Opening your workspace…</p></div>;
   return user ? children : <Navigate to="/login" replace />;
 }
 

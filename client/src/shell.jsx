@@ -16,7 +16,7 @@ export function Shell() {
   const title = location.pathname === "/library" ? "Your library" : location.pathname === "/research" ? "Research" : "Overview";
   return <div className={`app-frame ${location.pathname === "/research" ? "research-shell" : ""}`}>
     <aside className="sidebar">
-      <a className="wordmark" href="/"><img className="brand-logo sidebar-brand-logo" src="/papertrail-ai-logo.svg" alt="Papertrail"/></a>
+      <a className="wordmark" href="/"><img className="brand-logo sidebar-brand-logo" src="/papertrail-logo.png" alt="Papertrail"/></a>
       <div className="workspace-switch"><div className="workspace-avatar">{user?.name?.[0]?.toUpperCase() || "Y"}</div><div><strong>{user?.name || "Your workspace"}</strong><small>Personal workspace</small></div><ChevronDown size={15}/></div>
       <button className="new-research" onClick={() => navigate("/research")}><Plus size={16}/> New research chat <span>⌘ K</span></button>
       <p className="nav-label">WORKSPACE</p>
