@@ -1,6 +1,8 @@
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { generateThenPersist, persistChatTurn } from "../src/chats.js";
+import { generateQuestionAnswer, generateThenPersist, isExplicitDocumentQuestion, persistChatTurn } from "../src/chats.js";
+import { generateConversationTurn, generateGroundedAnswer } from "../src/ai.js";
+import { config } from "../src/config.js";
 import { pool, runTransaction } from "../src/db.js";
 
 function transactionalRecorder({ failOn = null } = {}) {
@@ -101,5 +103,153 @@ describe("chat turn persistence", () => {
       return true;
     });
     assert.equal(released, true);
+  });
+});
+
+describe("conversational and document answer routing", () => {
+  const docs = [{ id: "doc-1" }];
+
+  it("routes greetings, thanks, and casual conversation to a conversation reply without retrieval", async () => {
+    const cases = [
+      ["नमस्ते", "Hindi greeting", true],
+      ["Hello", "English greeting", true],
+      ["Hi, kaise ho?", "Hinglish greeting", true],
+      ["Thank you!", "Thank-you message", true],
+      ["What's up?", "Casual conversation", true],
+      ["What is your name?", "General conversation", false],
+    ];
+
+    for (const [question, label, expectedForce] of cases) {
+      let classifiedQuestion;
+      let forceConversation;
+      const result = await generateQuestionAnswer(question, {
+        userId: "user-1",
+        docs,
+        conversationTurn: async (value, force) => { classifiedQuestion = value; forceConversation = force; return { intent: force ? "document" : "conversation", answer: "Natural reply" }; },
+        embed: async () => { throw new Error("conversation should skip embeddings"); },
+        retrieve: async () => { throw new Error("conversation should skip retrieval"); },
+      });
+      assert.equal(classifiedQuestion, question, label);
+      assert.equal(forceConversation, expectedForce, label);
+      assert.deepEqual(result, { answer: "Natural reply", insufficientEvidence: false, citations: [] }, label);
+    }
+  });
+
+  it("uses Gemini's existing generation endpoint and asks it to mirror Hindi, English, or Hinglish", async () => {
+    const previousEnabled = config.aiEnabled;
+    const previousKey = config.geminiKey;
+    const previousFetch = globalThis.fetch;
+    let requestBody;
+    config.aiEnabled = true;
+    config.geminiKey = "test-key";
+    globalThis.fetch = async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ intent: "conversation", answer: "नमस्ते!" }) }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+    try {
+      const turn = await generateConversationTurn("नमस्ते");
+      const prompt = requestBody.contents[0].parts[0].text;
+      assert.equal(turn.answer, "नमस्ते!");
+      assert.match(prompt, /Hindi to Hindi, and Hinglish to natural Hinglish/);
+      assert.match(prompt, /LATEST MESSAGE:\nनमस्ते/);
+    } finally {
+      config.aiEnabled = previousEnabled;
+      config.geminiKey = previousKey;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("includes Papertrail's developer attribution in conversation prompts in English, Hindi, and Hinglish", async () => {
+    const previousEnabled = config.aiEnabled;
+    const previousKey = config.geminiKey;
+    const previousFetch = globalThis.fetch;
+    const prompts = [];
+    config.aiEnabled = true;
+    config.geminiKey = "test-key";
+    globalThis.fetch = async (_url, options) => {
+      prompts.push(JSON.parse(options.body).contents[0].parts[0].text);
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ intent: "conversation", answer: "I was developed by Prashant Chouhan." }) }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+    try {
+      for (const question of ["Who developed Papertrail AI?", "पेपरट्रेल AI को किसने विकसित किया?", "Papertrail AI ko kisne develop kiya?"]) {
+        await generateConversationTurn(question);
+      }
+      assert.equal(prompts.length, 3);
+      for (const prompt of prompts) {
+        assert.match(prompt, /Papertrail AI was developed by Prashant Chouhan/);
+        assert.match(prompt, /not the developer of the underlying Gemini AI model/);
+        assert.match(prompt, /language and style of the user's latest message/);
+      }
+    } finally {
+      config.aiEnabled = previousEnabled;
+      config.geminiKey = previousKey;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("includes Papertrail's developer attribution in document-grounded prompts in all three languages", async () => {
+    const previousEnabled = config.aiEnabled;
+    const previousKey = config.geminiKey;
+    const previousFetch = globalThis.fetch;
+    const prompts = [];
+    config.aiEnabled = true;
+    config.geminiKey = "test-key";
+    globalThis.fetch = async (_url, options) => {
+      prompts.push(JSON.parse(options.body).contents[0].parts[0].text);
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ answer: "I was developed by Prashant Chouhan.", insufficientEvidence: false, citations: [{ chunkId: "chunk-1" }] }) }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+    const excerpts = [{ chunkId: "chunk-1", documentId: "doc-1", documentName: "paper.pdf", pageStart: 1, pageEnd: 1, text: "Document content." }];
+    try {
+      for (const question of ["Who built Papertrail AI?", "Papertrail AI को किसने बनाया?", "Papertrail AI kisne banaya?"]) {
+        const result = await generateGroundedAnswer(question, excerpts);
+        assert.equal(result.answer, "I was developed by Prashant Chouhan.");
+      }
+      assert.equal(prompts.length, 3);
+      for (const prompt of prompts) {
+        assert.match(prompt, /Papertrail AI was developed by Prashant Chouhan/);
+        assert.match(prompt, /not the developer of the underlying Gemini AI model/);
+        assert.match(prompt, /language and style of the user's latest message/);
+      }
+    } finally {
+      config.aiEnabled = previousEnabled;
+      config.geminiKey = previousKey;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("keeps explicit PDF questions on the grounded retrieval path", async () => {
+    let embedded = false;
+    let retrieved = false;
+    let grounded = false;
+    const question = "Summarize this PDF.";
+    assert.equal(isExplicitDocumentQuestion(question), true);
+
+    const result = await generateQuestionAnswer(question, {
+      userId: "user-1",
+      docs,
+      conversationTurn: async () => { throw new Error("explicit document question should bypass conversation classification"); },
+      embed: async () => { embedded = true; return [1]; },
+      retrieve: async () => { retrieved = true; return [{ payload: { chunkId: "chunk-1", documentId: "doc-1", userId: "user-1", documentName: "paper.pdf", pageStart: 2, pageEnd: 2, text: "Supported content." } }]; },
+      groundedAnswer: async (_question, excerpts) => { grounded = true; assert.equal(excerpts[0].chunkId, "chunk-1"); return { answer: "Grounded summary", insufficientEvidence: false, citations: [] }; },
+    });
+
+    assert.equal(embedded, true);
+    assert.equal(retrieved, true);
+    assert.equal(grounded, true);
+    assert.equal(result.answer, "Grounded summary");
+  });
+
+  it("preserves insufficient-evidence handling when document retrieval finds nothing", async () => {
+    const result = await generateQuestionAnswer("Explain page 5.", {
+      userId: "user-1",
+      docs,
+      embed: async () => [1],
+      retrieve: async () => [],
+      groundedAnswer: async () => { throw new Error("should not generate without excerpts"); },
+    });
+
+    assert.equal(result.insufficientEvidence, true);
+    assert.deepEqual(result.citations, []);
+    assert.match(result.answer, /couldn't find relevant passages/);
   });
 });

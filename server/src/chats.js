@@ -3,13 +3,41 @@ import { z } from "zod";
 import { AppError, asyncHandler } from "./errors.js";
 import { query, transaction } from "./db.js";
 import { config } from "./config.js";
-import { embedText, generateGroundedAnswer } from "./ai.js";
+import { embedText, generateConversationTurn, generateGroundedAnswer } from "./ai.js";
 import { searchVectors } from "./vectors.js";
 
 const sessionInput = z.object({ documentIds: z.array(z.string().uuid()).max(20).default([]) });
 const questionInput = z.object({ question: z.string().trim().min(2).max(6000), documentIds: z.array(z.string().uuid()).min(1).max(20) });
 function cursorDecode(cursor) { try { const [date, id] = Buffer.from(cursor, "base64url").toString().split("|"); return date && id ? { date, id } : null; } catch { return null; } }
 function cursorEncode(row) { return Buffer.from(`${new Date(row.updated_at).toISOString()}|${row.id}`).toString("base64url"); }
+
+const explicitDocumentReference = /\b(?:pdfs?|documents?|files?|papers?|sources?|reports?|articles?|pages?|citations?|uploaded|selected documents?|results|findings|claims|conclusions?|eligibility)\b|\b(?:according to|based on|in the text|from the attachment)\b|\b(?:summari[sz]e|explain|describe|quote|extract|analy[sz]e)\s+(?:this|these|that|the above)\b/i;
+export function isExplicitDocumentQuestion(question) { return explicitDocumentReference.test(question); }
+const simpleConversation = /^(?:(?:hi|hello|hey)[,! ]+)?(?:hi|hello|hey|hiya|good morning|good afternoon|good evening|नमस्ते|नमस्कार|धन्यवाद|शुक्रिया|बहुत धन्यवाद|shukriya|dhanyavaad|kaise ho|kaisi ho|आप कैसे हैं|kya haal(?: hai)?|aur batao|thanks|thank you(?: so much)?|thanks a lot|good|great|nice|ok|okay|how are you(?: doing)?|what(?:'s| is) up|how(?:'s| is) it going|how do you do)[.!?, ]*$/iu;
+function isSimpleConversationMessage(question) { return simpleConversation.test(question.trim().replace(/\s+/g, " ")); }
+
+export async function generateQuestionAnswer(question, { userId, docs, onStage = () => {}, conversationTurn = generateConversationTurn, embed = embedText, retrieve = searchVectors, groundedAnswer = generateGroundedAnswer }) {
+  if (!isExplicitDocumentQuestion(question) && isSimpleConversationMessage(question)) {
+    onStage("generate_conversation");
+    const turn = await conversationTurn(question, true);
+    return { answer: turn.answer, insufficientEvidence: false, citations: [] };
+  }
+
+  if (!isExplicitDocumentQuestion(question)) {
+    onStage("classify_conversation");
+    const turn = await conversationTurn(question, false);
+    if (turn.intent === "conversation") return { answer: turn.answer, insufficientEvidence: false, citations: [] };
+  }
+
+  onStage("generate_embedding");
+  const vector = await embed(question);
+  onStage("qdrant_retrieval");
+  const points = await retrieve(vector, userId, docs.map((doc) => doc.id), 5);
+  const excerpts = points.map((point) => point.payload).filter((payload) => payload && docs.some((doc) => doc.id === payload.documentId) && payload.userId === userId).map((payload) => ({ chunkId: payload.chunkId, documentId: payload.documentId, documentName: payload.documentName, pageStart: payload.pageStart, pageEnd: payload.pageEnd, text: payload.text }));
+  if (!excerpts.length) return { answer: "I couldn't find relevant passages in the selected documents. Try selecting a different document or asking a more specific question.", insufficientEvidence: true, citations: [] };
+  onStage("generate_answer");
+  return groundedAnswer(question, excerpts);
+}
 
 export function buildChatListQuery(userId, cursor, limit) {
   const pageSize = limit + 1;
@@ -87,14 +115,7 @@ export const askQuestion = asyncHandler(async (req, res) => {
     await setChatDocuments(req.params.sessionId, req.user.id, docs);
     const userMessageId = crypto.randomUUID();
     return await generateThenPersist(async () => {
-      stage = "generate_embedding";
-      const vector = await embedText(question);
-      stage = "qdrant_retrieval";
-      const points = await searchVectors(vector, req.user.id, docs.map((doc) => doc.id), 5);
-      const excerpts = points.map((point) => point.payload).filter((payload) => payload && docs.some((doc) => doc.id === payload.documentId) && payload.userId === req.user.id).map((payload) => ({ chunkId: payload.chunkId, documentId: payload.documentId, documentName: payload.documentName, pageStart: payload.pageStart, pageEnd: payload.pageEnd, text: payload.text }));
-      if (!excerpts.length) return { answer: "I couldn't find relevant passages in the selected documents. Try another question or select different sources.", insufficientEvidence: true, citations: [] };
-      stage = "generate_answer";
-      return generateGroundedAnswer(question, excerpts);
+      return generateQuestionAnswer(question, { userId: req.user.id, docs, onStage: (nextStage) => { stage = nextStage; } });
     }, (result) => saveAnswer(req, res, userMessageId, question, result, (nextStage) => { stage = nextStage; }));
   } catch (error) {
     if (error && typeof error === "object") error.diagnosticStage = stage;
